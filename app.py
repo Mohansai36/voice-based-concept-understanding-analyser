@@ -1,232 +1,194 @@
 """
-app.py
-------
-Streamlit front-end and main application logic for the
-Voice-Based Concept Understanding Analyser (VBCUA).
+Voice Based Concept Understanding Analyser (VBCUA)
+Main Streamlit Application
 
-Covers Epic 3: UI Development
-- User Interface Design and Visualization
-- Input Handling and Session State Management
-- Output Rendering and Report Generation
+Epic 1: Streamlit Application Initialization
+Epic 3: User Interface Design, Input Handling & Session State, Output Rendering
+
+Run with:
+    streamlit run app.py
 """
 
-import os
 import streamlit as st
 
-from audio_utils import save_uploaded_file, extract_audio_features, save_waveform
-from speech_to_text import speech_to_text
-from semantic_eval import semantic_similarity
-from scoring_engine import filler_word_ratio, evaluate_understanding
-from report_generator import generate_pdf_report
+from modules.stt import transcribe_audio
+from modules.similarity import compute_similarity
+from modules.audio_features import analyze_audio
+from modules.viz import plot_waveform
+from modules.report import build_pdf_report, generate_ai_summary
 
-
-# ---------------------------------------------------------------------------
-# Page configuration
-# ---------------------------------------------------------------------------
-st.set_page_config(
-    page_title="VBCUA — Voice-Based Concept Understanding Analyser",
-    page_icon="🎙️",
-    layout="centered",
-)
-
-CUSTOM_CSS = """
-<style>
-    .main-title {
-        font-size: 2rem;
-        font-weight: 700;
-        margin-bottom: 0.2rem;
-    }
-    .subtitle {
-        color: #6b7280;
-        margin-bottom: 1.5rem;
-    }
-    .metric-card {
-        background-color: #f8f9fa;
-        border-radius: 10px;
-        padding: 1rem;
-        margin-bottom: 0.5rem;
-        border: 1px solid #e5e7eb;
-    }
-    .result-banner {
-        padding: 0.9rem 1.2rem;
-        border-radius: 10px;
-        color: white;
-        font-weight: 600;
-        font-size: 1.1rem;
-        margin: 1rem 0;
-    }
-</style>
-"""
-st.markdown(CUSTOM_CSS, unsafe_allow_html=True)
-
+st.set_page_config(page_title="Voice Based Concept Understanding Analyser", page_icon="🎙️", layout="centered")
 
 # ---------------------------------------------------------------------------
-# Session state initialization (Epic 3 / Story: Input Handling & Session State)
+# Session State Initialization (Epic 3: Input Handling and Session State)
 # ---------------------------------------------------------------------------
-def init_session_state():
-    defaults = {
-        "audio_path": None,
-        "waveform_path": None,
-        "transcript": None,
-        "audio_features": None,
-        "filler_ratio": None,
-        "similarity": None,
-        "final_score": None,
-        "understanding_level": None,
-        "level_color": None,
-        "pdf_path": None,
-        "analysis_done": False,
-    }
-    for key, value in defaults.items():
-        if key not in st.session_state:
-            st.session_state[key] = value
+for key, default in [
+    ("transcript", ""),
+    ("similarity_result", None),
+    ("audio_result", None),
+    ("waveform_png", None),
+    ("analyzed", False),
+]:
+    if key not in st.session_state:
+        st.session_state[key] = default
 
+REFERENCE_CONCEPTS = {
+    "Machine Learning": (
+        "Machine learning is a branch of artificial intelligence where systems learn patterns "
+        "from data instead of being explicitly programmed with rules. Models are trained on "
+        "example data, and they improve their predictions or decisions as they see more data, "
+        "generalizing to new, unseen inputs."
+    ),
+    "Cloud Computing": (
+        "Cloud computing is the delivery of computing services -- servers, storage, databases, "
+        "networking, and software -- over the internet, allowing on-demand access to shared "
+        "resources without owning physical infrastructure. It typically follows a pay-as-you-go "
+        "model and scales elastically with demand."
+    ),
+    "Photosynthesis": (
+        "Photosynthesis is the process where plants convert light energy into chemical energy "
+        "stored in glucose. It happens in the chloroplasts using chlorophyll, taking in carbon "
+        "dioxide and water while releasing oxygen as a byproduct."
+    ),
+    "Custom (type your own reference)": "",
+}
 
-init_session_state()
-
-
-# ---------------------------------------------------------------------------
-# Header
-# ---------------------------------------------------------------------------
-st.markdown('<div class="main-title">🎙️ Voice-Based Concept Understanding Analyser</div>',
-            unsafe_allow_html=True)
-st.markdown('<div class="subtitle">Automated evaluation of spoken conceptual explanations using AI.</div>',
-            unsafe_allow_html=True)
-
-
-# ---------------------------------------------------------------------------
-# Reference concept input
-# ---------------------------------------------------------------------------
-st.subheader("Reference Concept")
-reference_concept = st.text_area(
-    "Enter the concept the student is expected to explain",
-    placeholder="e.g. Machine Learning is a subset of artificial intelligence that allows "
-                "systems to learn patterns from data and improve performance without being "
-                "explicitly programmed.",
-    height=100,
+st.title("🎙️ Voice Based Concept Understanding Analyser")
+st.caption(
+    "An AI-powered assessment tool combining speech-to-text (Whisper), semantic similarity "
+    "(Sentence-BERT), and audio-based fluency analysis (Librosa) to evaluate spoken "
+    "conceptual understanding."
 )
 
 # ---------------------------------------------------------------------------
-# Audio upload
+# Input Handling
 # ---------------------------------------------------------------------------
-st.subheader("Upload Student Audio (WAV)")
-uploaded_file = st.file_uploader(
-    "Drag and drop file here",
-    type=["wav", "mp3"],
-    help="Limit 200MB per file • WAV, MP3",
-)
+st.subheader("1. Choose a concept")
+concept_choice = st.selectbox("Pick a concept to explain", list(REFERENCE_CONCEPTS.keys()))
 
-if uploaded_file is not None and st.session_state.audio_path is None:
-    try:
-        st.session_state.audio_path = save_uploaded_file(uploaded_file)
-        st.session_state.waveform_path = save_waveform(st.session_state.audio_path)
-    except Exception as exc:
-        st.error(f"Could not process the uploaded audio file: {exc}")
-
-if st.session_state.audio_path:
-    st.audio(st.session_state.audio_path)
-    if st.session_state.waveform_path:
-        st.image(st.session_state.waveform_path, caption="Audio Waveform", use_container_width=True)
+if concept_choice == "Custom (type your own reference)":
+    reference_text = st.text_area("Enter the reference/ideal explanation", height=100)
+    concept_label = st.text_input("Concept name", value="Custom Concept")
 else:
-    st.info("Upload an audio file to begin analysis.")
+    reference_text = REFERENCE_CONCEPTS[concept_choice]
+    concept_label = concept_choice
+    with st.expander("View reference explanation"):
+        st.write(reference_text)
 
-# Reset button — clears session state for a new evaluation
-col_a, col_b = st.columns([1, 3])
-with col_a:
-    if st.button("🔄 Reset"):
-        for key in list(st.session_state.keys()):
-            del st.session_state[key]
-        st.rerun()
+st.subheader("2. Record or upload your explanation")
+input_mode = st.radio("Input method", ["Upload audio file", "Record with microphone"], horizontal=True)
 
+audio_bytes = None
+audio_format = "wav"
+
+if input_mode == "Upload audio file":
+    uploaded_file = st.file_uploader("Upload an audio file (wav, mp3, m4a, ogg)", type=["wav", "mp3", "m4a", "ogg"])
+    if uploaded_file is not None:
+        audio_bytes = uploaded_file.read()
+        audio_format = uploaded_file.name.split(".")[-1].lower()
+else:
+    mic_input = st.audio_input("Record your explanation")
+    if mic_input is not None:
+        audio_bytes = mic_input.read()
+        audio_format = "wav"
+
+if audio_bytes:
+    st.audio(audio_bytes)
 
 # ---------------------------------------------------------------------------
-# Analysis trigger
+# Analyze
 # ---------------------------------------------------------------------------
-with col_b:
-    analyze_clicked = st.button(
-        "Analyze Concept Understanding",
-        disabled=(st.session_state.audio_path is None or not reference_concept.strip()),
-        type="primary",
-    )
+st.subheader("3. Analyze")
+can_analyze = audio_bytes is not None and bool(reference_text.strip())
+if not reference_text.strip():
+    st.info("Select or enter a reference explanation above before analyzing.")
 
-if analyze_clicked:
-    if not reference_concept.strip():
-        st.warning("Please enter a reference concept before analyzing.")
-    elif not st.session_state.audio_path:
-        st.warning("Please upload a student audio file before analyzing.")
+if st.button("Analyze My Explanation", type="primary", disabled=not can_analyze):
+    with st.spinner("Transcribing speech with Whisper..."):
+        stt_result = transcribe_audio(audio_bytes, audio_format)
+
+    if not stt_result["success"]:
+        st.error(stt_result["error"])
+        st.session_state.analyzed = False
     else:
-        with st.spinner("Processing and evaluating..."):
-            try:
-                audio_path = st.session_state.audio_path
+        st.session_state.transcript = stt_result["transcript"]
 
-                transcript = speech_to_text(audio_path)
-                audio_features = extract_audio_features(audio_path)
-                filler_ratio = filler_word_ratio(transcript)
-                similarity = semantic_similarity(transcript, reference_concept)
-                score, level, color = evaluate_understanding(similarity, filler_ratio, audio_features)
+        with st.spinner("Scoring conceptual understanding (Sentence-BERT)..."):
+            st.session_state.similarity_result = compute_similarity(reference_text, stt_result["transcript"])
 
-                st.session_state.transcript = transcript
-                st.session_state.audio_features = audio_features
-                st.session_state.filler_ratio = filler_ratio
-                st.session_state.similarity = similarity
-                st.session_state.final_score = score
-                st.session_state.understanding_level = level
-                st.session_state.level_color = color
-                st.session_state.analysis_done = True
-                st.session_state.pdf_path = None  # invalidate any stale report
+        with st.spinner("Analyzing fluency: filler words, pauses, RMS energy..."):
+            audio_result = analyze_audio(audio_bytes, stt_result["transcript"], audio_format)
+            st.session_state.audio_result = audio_result
 
-            except Exception as exc:
-                st.error(f"Analysis failed: {exc}")
-                st.session_state.analysis_done = False
+        if "error" not in audio_result:
+            with st.spinner("Rendering waveform..."):
+                st.session_state.waveform_png = plot_waveform(audio_result["waveform"], audio_result["sample_rate"])
 
+        st.session_state.analyzed = True
 
 # ---------------------------------------------------------------------------
-# Results rendering (Epic 3 / Story: Output Rendering and Report Generation)
+# Interactive Dashboard (Epic 3: Interactive Reporting and Performance Review)
 # ---------------------------------------------------------------------------
-if st.session_state.analysis_done:
-    st.success("Analysis Completed")
+if st.session_state.analyzed:
+    st.divider()
+    st.subheader("📊 Evaluation Dashboard")
 
-    st.subheader("Transcribed Explanation")
-    st.write(st.session_state.transcript or "_No speech detected in the audio._")
+    sim = st.session_state.similarity_result
+    aud = st.session_state.audio_result
 
-    st.markdown(
-        f'<div class="result-banner" style="background-color:{st.session_state.level_color};">'
-        f'Understanding Score: {st.session_state.final_score}/100 — {st.session_state.understanding_level}'
-        f'</div>',
-        unsafe_allow_html=True,
-    )
+    st.markdown("**Transcribed Explanation:**")
+    st.info(st.session_state.transcript)
 
-    st.subheader("Metrics")
-    m1, m2, m3, m4 = st.columns(4)
-    m1.metric("Semantic Similarity", f"{st.session_state.similarity:.2f}")
-    m2.metric("Filler Word Ratio", f"{st.session_state.filler_ratio:.2f}")
-    m3.metric("Pause Ratio", f"{st.session_state.audio_features['pause_ratio']:.2f}")
-    m4.metric("Confidence (Energy)", f"{st.session_state.audio_features['rms_energy']:.4f}")
+    col1, col2 = st.columns(2)
+    with col1:
+        st.metric("Conceptual Understanding Score", f"{sim['score']}/100", sim["verdict"])
+        st.caption(sim["missing_hint"])
+    with col2:
+        if "error" not in aud:
+            st.metric("Fluency Score", f"{aud['fluency_score']}/100", aud["fluency_verdict"])
+        else:
+            st.warning(aud["error"])
 
-    # --- Report generation ---
-    st.subheader("Download Report")
-    if st.button("📄 Generate PDF Report"):
-        with st.spinner("Generating report..."):
-            metrics = {
-                "semantic_similarity": st.session_state.similarity,
-                "filler_ratio": st.session_state.filler_ratio,
-                "pause_ratio": st.session_state.audio_features["pause_ratio"],
-                "rms_energy": st.session_state.audio_features["rms_energy"],
-            }
-            st.session_state.pdf_path = generate_pdf_report(
-                reference_concept=reference_concept,
-                transcript=st.session_state.transcript,
-                waveform_image_path=st.session_state.waveform_path,
-                metrics=metrics,
-                final_score=st.session_state.final_score,
-                understanding_level=st.session_state.understanding_level,
-            )
+    if "error" not in aud:
+        final_score = round(sim["score"] * 0.7 + aud["fluency_score"] * 0.3, 1)
+        st.metric("🏁 Final Comprehension Score", f"{final_score}/100")
 
-    if st.session_state.pdf_path and os.path.exists(st.session_state.pdf_path):
-        with open(st.session_state.pdf_path, "rb") as f:
-            st.download_button(
-                label="⬇️ Download PDF Report",
-                data=f,
-                file_name=os.path.basename(st.session_state.pdf_path),
-                mime="application/pdf",
-            )
+        st.markdown("**Waveform Visualization:**")
+        st.image(st.session_state.waveform_png)
+
+        st.markdown("**Pause Analysis:**")
+        pcol1, pcol2, pcol3 = st.columns(3)
+        pcol1.metric("Pause Ratio", f"{aud['pause_ratio_pct']}%")
+        pcol2.metric("Pause Count", aud["pause_count"])
+        pcol3.metric("Duration", f"{aud['duration_sec']}s")
+
+        st.markdown("**Filler Word Statistics:**")
+        fcol1, fcol2 = st.columns(2)
+        fcol1.metric("Filler Word Count", aud["filler_count"])
+        fcol2.metric("Filler Word Ratio", f"{aud['filler_ratio_pct']}%")
+        if aud["filler_breakdown"]:
+            st.write(aud["filler_breakdown"])
+        else:
+            st.caption("No common filler words detected.")
+
+        st.markdown("**RMS Energy (speaking clarity/confidence proxy):**")
+        st.write(f"Mean: {aud['rms_energy_mean']}  |  Std Dev: {aud['rms_energy_std']}")
+
+        st.markdown("**🤖 AI-Generated Summary:**")
+        st.success(generate_ai_summary(concept_label, sim, aud))
+
+        pdf_bytes = build_pdf_report(concept_label, st.session_state.transcript, sim, aud, st.session_state.waveform_png)
+        st.download_button(
+            "📄 Download Full Report (PDF)",
+            data=pdf_bytes,
+            file_name=f"concept_report_{concept_label.replace(' ', '_')}.pdf",
+            mime="application/pdf",
+        )
+
+    if st.button("Start New Analysis"):
+        st.session_state.transcript = ""
+        st.session_state.similarity_result = None
+        st.session_state.audio_result = None
+        st.session_state.waveform_png = None
+        st.session_state.analyzed = False
+        st.rerun()
