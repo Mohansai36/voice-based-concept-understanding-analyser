@@ -1,3 +1,4 @@
+
 # Voice Based Concept Understanding Analyser (VBCUA)
 
 An AI-powered Streamlit web app that evaluates how well a user understands
@@ -21,6 +22,23 @@ voice_concept_analyser/
 │   ├── viz.py                 # Waveform visualization (Epic 3)
 │   └── report.py              # AI-generated summary + PDF report builder (Epic 3)
 ```
+## References:
+
+Python: https://www.python.org/downloads/
+
+FastAPI: https://fastapi.tiangolo.com/
+
+Streamlit: https://docs.streamlit.io/
+
+Librosa: https://librosa.org/doc/latest/index.html
+
+Whisper: https://github.com/openai/whisper
+
+Sentence-BERT: https://www.sbert.net/docs/
+
+ReportLab: https://www.reportlab.com/docs/reportlab-userguide.pdf
+
+Visual Studio Code: https://code.visualstudio.com/
 
 ## Setup
 
